@@ -1,5 +1,23 @@
-# Uncomment to enable Azure Monitor OpenTelemetry
-# Ref: aka.ms/functions-azure-monitor-python 
-# azure-monitor-opentelemetry 
-
+# Azure Functions
 azure-functions
+
+# Supabase client
+supabase>=2.0.0
+
+# JWT handling
+PyJWT>=2.8.0
+
+# HTTP client (used by supabase)
+httpx>=0.25.0
+
+# Async support
+aiohttp>=3.9.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# File handling
+python-multipart>=0.0.6
+
+# Azure Monitor (optional)
+# azure-monitor-opentelemetry

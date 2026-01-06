@@ -5,7 +5,7 @@ Business logic for project operations.
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from shared.supabase_client import get_supabase_client
+from shared.supabase_client import get_supabase_client, get_storage_bucket
 from shared.permissions import check_project_access, get_user_email, NotFoundError, ForbiddenError
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,7 @@ class ProjectService:
     
     def __init__(self):
         self.client = get_supabase_client()
+        self.storage_bucket = get_storage_bucket()
     
     async def list_projects(self, user_id: str) -> List[Dict]:
         """
@@ -98,7 +99,13 @@ class ProjectService:
                 .eq("project_id", project_id) \
                 .order("created_at", desc=True) \
                 .execute()
-            project["files"] = files_result.data
+            
+            # Generate signed URLs for each file
+            files_with_urls = []
+            for file_record in files_result.data:
+                file_record["url"] = self._get_signed_url_for_file(file_record)
+                files_with_urls.append(file_record)
+            project["files"] = files_with_urls
             
             # Get chats
             chats_result = self.client.table("chats") \
@@ -119,6 +126,52 @@ class ProjectService:
                 project["shares"] = []
         
         return project
+    
+    def _get_signed_url_for_file(self, file_record: Dict, expires_in: int = 3600) -> Optional[str]:
+        """
+        Generate a signed URL for a file record.
+        
+        Args:
+            file_record: The file metadata from database
+            expires_in: URL validity in seconds (default: 1 hour)
+            
+        Returns:
+            Signed URL or None if unable to generate
+        """
+        storage_path = file_record.get("url", "")
+        
+        if not storage_path:
+            return None
+        
+        # If it's already a signed URL, reconstruct the path
+        if storage_path.startswith("http"):
+            storage_path = self._extract_path_from_url(storage_path, file_record)
+        
+        try:
+            signed_url_result = self.client.storage.from_(self.storage_bucket).create_signed_url(
+                storage_path, expires_in
+            )
+            return signed_url_result.get("signedURL", None)
+        except Exception as e:
+            logger.warning(f"Failed to generate signed URL for {storage_path}: {str(e)}")
+            return None
+    
+    def _extract_path_from_url(self, url: str, file_record: Dict) -> str:
+        """Extract storage path from a signed URL or reconstruct from file record."""
+        project_id = file_record.get("project_id")
+        file_name = file_record.get("name")
+        
+        # Get the project to find the user_id
+        project_result = self.client.table("projects") \
+            .select("user_id") \
+            .eq("id", project_id) \
+            .execute()
+        
+        if project_result.data:
+            owner_id = project_result.data[0]["user_id"]
+            return f"{owner_id}/{project_id}/{file_name}"
+        
+        raise NotFoundError("Could not determine file storage path")
     
     async def create_project(self, user_id: str, data: Dict) -> Dict:
         """

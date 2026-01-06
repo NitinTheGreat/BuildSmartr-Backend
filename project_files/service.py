@@ -23,14 +23,14 @@ class ProjectFileService:
     
     async def list_files(self, user_id: str, project_id: str) -> List[Dict]:
         """
-        List all files in a project.
+        List all files in a project with signed URLs.
         
         Args:
             user_id: The authenticated user's ID
             project_id: The project's UUID
             
         Returns:
-            List of file metadata
+            List of file metadata with signed URLs
             
         Raises:
             NotFoundError: If project doesn't exist
@@ -45,11 +45,45 @@ class ProjectFileService:
             .order("created_at", desc=True) \
             .execute()
         
-        return result.data
+        # Generate signed URLs for each file
+        files = result.data
+        for file_record in files:
+            file_record["url"] = await self._get_signed_url_for_file(file_record)
+        
+        return files
+    
+    async def _get_signed_url_for_file(self, file_record: Dict, expires_in: int = 3600) -> Optional[str]:
+        """
+        Generate a signed URL for a file record.
+        
+        Args:
+            file_record: The file metadata from database
+            expires_in: URL validity in seconds (default: 1 hour)
+            
+        Returns:
+            Signed URL or None if unable to generate
+        """
+        storage_path = file_record.get("url", "")
+        
+        if not storage_path:
+            return None
+        
+        # If it's already a signed URL, reconstruct the path
+        if storage_path.startswith("http"):
+            storage_path = self._extract_path_from_url(storage_path, file_record)
+        
+        try:
+            signed_url_result = self.client.storage.from_(self.storage_bucket).create_signed_url(
+                storage_path, expires_in
+            )
+            return signed_url_result.get("signedURL", None)
+        except Exception as e:
+            logger.warning(f"Failed to generate signed URL for {storage_path}: {str(e)}")
+            return None
     
     async def get_file(self, user_id: str, project_id: str, file_id: str) -> Dict:
         """
-        Get a single file's metadata.
+        Get a single file's metadata with signed URL.
         
         Args:
             user_id: The authenticated user's ID
@@ -57,7 +91,7 @@ class ProjectFileService:
             file_id: The file's UUID
             
         Returns:
-            File metadata
+            File metadata with signed URL
             
         Raises:
             NotFoundError: If file doesn't exist
@@ -75,7 +109,9 @@ class ProjectFileService:
         if not result.data:
             raise NotFoundError("File not found")
         
-        return result.data[0]
+        file_record = result.data[0]
+        file_record["url"] = await self._get_signed_url_for_file(file_record)
+        return file_record
     
     async def upload_file(
         self,
@@ -88,6 +124,7 @@ class ProjectFileService:
     ) -> Dict:
         """
         Upload a file to a project.
+        Automatically deletes any existing files in the same category before uploading.
         
         Args:
             user_id: The authenticated user's ID
@@ -110,6 +147,9 @@ class ProjectFileService:
         # Validate category
         if category not in self.VALID_CATEGORIES:
             category = "other"
+        
+        # Delete existing files in the same category before uploading
+        await self._delete_files_in_category(project_id, category, access['project']['user_id'])
         
         # Generate storage path
         storage_path = f"{access['project']['user_id']}/{project_id}/{file_name}"
@@ -158,6 +198,49 @@ class ProjectFileService:
             return file_record
         
         raise Exception("Failed to store file metadata")
+    
+    async def _delete_files_in_category(self, project_id: str, category: str, owner_id: str) -> None:
+        """
+        Delete all existing files in a category for a project.
+        
+        Args:
+            project_id: The project's UUID
+            category: The file category to clear
+            owner_id: The project owner's user ID (for storage path)
+        """
+        # Get all files in this category
+        existing_files = self.client.table("project_files") \
+            .select("*") \
+            .eq("project_id", project_id) \
+            .eq("category", category) \
+            .execute()
+        
+        if not existing_files.data:
+            return
+        
+        logger.info(f"Deleting {len(existing_files.data)} existing file(s) in category '{category}' for project {project_id}")
+        
+        for file_record in existing_files.data:
+            storage_path = file_record.get("url", "")
+            file_id = file_record.get("id")
+            
+            # Delete from storage
+            if storage_path and not storage_path.startswith("http"):
+                try:
+                    self.client.storage.from_(self.storage_bucket).remove([storage_path])
+                    logger.debug(f"Deleted file from storage: {storage_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete file from storage: {str(e)}")
+            
+            # Delete from database
+            try:
+                self.client.table("project_files") \
+                    .delete() \
+                    .eq("id", file_id) \
+                    .execute()
+                logger.debug(f"Deleted file record: {file_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete file record: {str(e)}")
     
     async def delete_file(self, user_id: str, project_id: str, file_id: str) -> bool:
         """

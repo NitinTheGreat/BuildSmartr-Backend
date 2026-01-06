@@ -94,10 +94,11 @@ class ProjectShareService:
             raise ValueError("Project is already shared with this email")
         
         # Create share record
+        # Table columns: id, project_id, shared_with_email, shared_by_user_id, permission, created_at
         share_data = {
             "project_id": project_id,
             "shared_with_email": email.lower(),
-            "shared_by_user_id": user_id,
+            "shared_by_user_id": user_id,  # The user who is sharing (project owner)
             "permission": permission,
         }
         

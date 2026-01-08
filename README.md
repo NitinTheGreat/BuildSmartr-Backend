@@ -305,6 +305,17 @@ All errors return a consistent JSON format:
 1. Create an Azure Function App (Python 3.11, Consumption plan)
 2. Configure Application Settings with the environment variables
 3. Deploy using Azure Functions Core Tools:
+    ```bash
+    Compress-Archive * app.zip -Force
+  ```bash
+
+  ```bash
+  az functionapp deployment source config-zip `
+  --name pythonfunctions `
+  --resource-group azurefunctions-buildsmartr `
+  --src app.zip
+  ```bash
+  
    ```bash
    func azure functionapp publish <function-app-name>
    ```

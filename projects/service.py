@@ -107,13 +107,18 @@ class ProjectService:
                 files_with_urls.append(file_record)
             project["files"] = files_with_urls
             
-            # Get chats
+            # Get chats (with message counts)
             chats_result = self.client.table("chats") \
                 .select("*") \
                 .eq("project_id", project_id) \
                 .order("updated_at", desc=True) \
                 .execute()
-            project["chats"] = chats_result.data
+            
+            # Add message counts to chats
+            from chats.service import ChatService
+            chat_service = ChatService()
+            chats_with_counts = chat_service._add_message_counts(chats_result.data)
+            project["chats"] = chats_with_counts
             
             # Get shares (owner only)
             if access["is_owner"]:

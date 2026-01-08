@@ -22,6 +22,58 @@ class ChatService:
     def __init__(self):
         self.client = get_supabase_client()
     
+    def _add_message_count(self, chat: Dict) -> Dict:
+        """
+        Add message_count to a chat object.
+        
+        Args:
+            chat: Chat record
+            
+        Returns:
+            Chat record with message_count added
+        """
+        chat_id = chat.get("id")
+        
+        # Count messages for this chat
+        result = self.client.table("messages") \
+            .select("id", count="exact") \
+            .eq("chat_id", chat_id) \
+            .execute()
+        
+        chat["message_count"] = result.count if result.count is not None else 0
+        return chat
+    
+    def _add_message_counts(self, chats: List[Dict]) -> List[Dict]:
+        """
+        Add message_count to multiple chat objects efficiently.
+        
+        Args:
+            chats: List of chat records
+            
+        Returns:
+            List of chat records with message_count added
+        """
+        if not chats:
+            return chats
+        
+        # Get all chat IDs
+        chat_ids = [chat["id"] for chat in chats]
+        
+        # Query message counts for all chats at once
+        message_counts = {}
+        for chat_id in chat_ids:
+            result = self.client.table("messages") \
+                .select("id", count="exact") \
+                .eq("chat_id", chat_id) \
+                .execute()
+            message_counts[chat_id] = result.count if result.count is not None else 0
+        
+        # Add message_count to each chat
+        for chat in chats:
+            chat["message_count"] = message_counts.get(chat["id"], 0)
+        
+        return chats
+    
     async def list_general_chats(self, user_id: str) -> List[Dict]:
         """
         List all general chats owned by the user.
@@ -30,7 +82,7 @@ class ChatService:
             user_id: The authenticated user's ID
             
         Returns:
-            List of general chat records
+            List of general chat records with message_count
         """
         result = self.client.table("chats") \
             .select("*") \
@@ -39,7 +91,8 @@ class ChatService:
             .order("updated_at", desc=True) \
             .execute()
         
-        return result.data
+        chats = self._add_message_counts(result.data)
+        return chats
     
     async def list_project_chats(self, user_id: str, project_id: str) -> List[Dict]:
         """
@@ -50,7 +103,7 @@ class ChatService:
             project_id: The project's UUID
             
         Returns:
-            List of project chat records
+            List of project chat records with message_count
             
         Raises:
             NotFoundError: If project doesn't exist
@@ -66,11 +119,12 @@ class ChatService:
             .order("updated_at", desc=True) \
             .execute()
         
-        return result.data
+        chats = self._add_message_counts(result.data)
+        return chats
     
     async def get_chat(self, user_id: str, chat_id: str, include_messages: bool = True) -> Dict:
         """
-        Get a single chat with optional messages.
+        Get a single chat with optional messages and message_count.
         
         Args:
             user_id: The authenticated user's ID
@@ -78,7 +132,7 @@ class ChatService:
             include_messages: Whether to include messages
             
         Returns:
-            Chat data with optional messages
+            Chat data with optional messages and message_count
             
         Raises:
             NotFoundError: If chat doesn't exist
@@ -97,6 +151,10 @@ class ChatService:
                 .order("timestamp", desc=False) \
                 .execute()
             chat["messages"] = messages_result.data
+            chat["message_count"] = len(messages_result.data)
+        else:
+            # Still add message_count even if not including messages
+            chat = self._add_message_count(chat)
         
         return chat
     
@@ -109,7 +167,7 @@ class ChatService:
             title: Optional chat title
             
         Returns:
-            Created chat record
+            Created chat record with message_count
         """
         chat_data = {
             "user_id": user_id,
@@ -127,6 +185,7 @@ class ChatService:
             chat["is_owner"] = True
             chat["permission"] = "owner"
             chat["messages"] = []
+            chat["message_count"] = 0
             return chat
         
         raise Exception("Failed to create chat")
@@ -146,7 +205,7 @@ class ChatService:
             title: Optional chat title
             
         Returns:
-            Created chat record
+            Created chat record with message_count
             
         Raises:
             NotFoundError: If project doesn't exist
@@ -171,6 +230,7 @@ class ChatService:
             chat["is_owner"] = True
             chat["permission"] = "owner"
             chat["messages"] = []
+            chat["message_count"] = 0
             return chat
         
         raise Exception("Failed to create chat")
@@ -185,7 +245,7 @@ class ChatService:
             title: New chat title
             
         Returns:
-            Updated chat record
+            Updated chat record with message_count
             
         Raises:
             NotFoundError: If chat doesn't exist
@@ -210,6 +270,7 @@ class ChatService:
             chat = result.data[0]
             chat["is_owner"] = True
             chat["permission"] = "owner"
+            chat = self._add_message_count(chat)
             return chat
         
         raise Exception("Failed to update chat")

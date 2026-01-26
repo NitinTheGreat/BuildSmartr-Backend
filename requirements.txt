@@ -18,9 +18,3 @@ python-dotenv>=1.0.0
 
 # File handling
 python-multipart>=0.0.6
-
-# JWKS client for Supabase token verification
-PyJWKClient>=0.0.1
-
-# Azure Monitor (optional)
-# azure-monitor-opentelemetry

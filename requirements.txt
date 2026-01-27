@@ -7,8 +7,11 @@ supabase>=2.0.0
 # JWT handling
 PyJWT[crypto]>=2.8.0
 
-# HTTP client (used by supabase)
+# HTTP client (used by supabase and AI backend)
 httpx>=0.25.0
+
+# HTTP client (used by OAuth)
+requests>=2.31.0
 
 # Async support
 aiohttp>=3.9.0

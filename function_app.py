@@ -1271,4 +1271,278 @@ async def disconnect_outlook(req: func.HttpRequest) -> func.HttpResponse:
         return error_response("Failed to disconnect Outlook", 500)
 
 
+# =============================================================================
+# OAuth Endpoints - Gmail and Outlook OAuth flows
+# =============================================================================
+
+from shared.oauth import (
+    get_google_auth_url, exchange_google_code, get_google_user_info, build_gmail_credentials,
+    get_microsoft_auth_url, exchange_microsoft_code, get_microsoft_user_info, build_outlook_credentials,
+    get_frontend_url
+)
+
+
+@app.route(route="oauth/gmail", methods=["GET"])
+def oauth_gmail_redirect(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/oauth/gmail
+    Redirects the user to Google's OAuth consent page.
+    """
+    try:
+        # Get optional state parameter
+        state = req.params.get("state")
+        
+        # Generate Google OAuth URL
+        auth_url = get_google_auth_url(state)
+        
+        if auth_url.startswith("#error"):
+            return error_response("Google OAuth not configured. Missing GOOGLE_CLIENT_ID.", 500)
+        
+        logger.info(f"Redirecting user to Google OAuth: {auth_url[:100]}...")
+        
+        # Return redirect response
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": auth_url}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error initiating Gmail OAuth: {str(e)}")
+        return error_response("Failed to initiate Gmail authentication", 500)
+
+
+@app.route(route="oauth/gmail/callback", methods=["GET"])
+async def oauth_gmail_callback(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/oauth/gmail/callback
+    Handles the OAuth callback from Google, exchanges code for tokens,
+    stores them in user_info, and redirects to frontend.
+    """
+    try:
+        code = req.params.get("code")
+        state = req.params.get("state")
+        error = req.params.get("error")
+        
+        frontend_url = get_frontend_url()
+        
+        # Handle OAuth errors
+        if error:
+            logger.error(f"Google OAuth error: {error}")
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=gmail_auth_failed&message={error}"}
+            )
+        
+        if not code:
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=gmail_auth_failed&message=missing_code"}
+            )
+        
+        # Exchange code for tokens
+        tokens = exchange_google_code(code)
+        if not tokens:
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=gmail_auth_failed&message=token_exchange_failed"}
+            )
+        
+        # Get user info from Google
+        access_token = tokens.get("access_token")
+        google_user = get_google_user_info(access_token)
+        if not google_user:
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=gmail_auth_failed&message=user_info_failed"}
+            )
+        
+        gmail_email = google_user.get("email")
+        
+        # Build credentials object
+        gmail_credentials = build_gmail_credentials(tokens)
+        
+        # Try to get user from token if available (user is logged into our app)
+        # For OAuth callback, user may not be authenticated with our app yet
+        # The frontend will need to handle saving the credentials after the redirect
+        
+        logger.info(f"Gmail OAuth successful for: {gmail_email}")
+        
+        # Redirect to frontend with success and credentials in URL params
+        # The frontend will then call /api/user/connect/gmail to save them
+        import urllib.parse
+        import base64
+        
+        # Encode credentials as base64 to pass safely in URL
+        creds_json = json.dumps(gmail_credentials)
+        creds_b64 = base64.urlsafe_b64encode(creds_json.encode()).decode()
+        
+        redirect_params = urllib.parse.urlencode({
+            "gmail_connected": "true",
+            "gmail_email": gmail_email,
+            "gmail_creds": creds_b64
+        })
+        
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/account?{redirect_params}"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in Gmail OAuth callback: {str(e)}")
+        frontend_url = get_frontend_url()
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/account?error=gmail_auth_failed&message=server_error"}
+        )
+
+
+@app.route(route="oauth/gmail/disconnect", methods=["POST"])
+async def oauth_gmail_disconnect(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/oauth/gmail/disconnect
+    Disconnect Gmail.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        service = UserInfoService()
+        user_info = await service.disconnect_gmail(user_email)
+        
+        return success_response(user_info)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except Exception as e:
+        logger.error(f"Error disconnecting Gmail: {str(e)}")
+        return error_response("Failed to disconnect Gmail", 500)
+
+
+@app.route(route="oauth/outlook", methods=["GET"])
+def oauth_outlook_redirect(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/oauth/outlook
+    Redirects the user to Microsoft's OAuth consent page.
+    """
+    try:
+        state = req.params.get("state")
+        auth_url = get_microsoft_auth_url(state)
+        
+        if auth_url.startswith("#error"):
+            return error_response("Microsoft OAuth not configured. Missing MICROSOFT_CLIENT_ID.", 500)
+        
+        logger.info(f"Redirecting user to Microsoft OAuth: {auth_url[:100]}...")
+        
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": auth_url}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error initiating Outlook OAuth: {str(e)}")
+        return error_response("Failed to initiate Outlook authentication", 500)
+
+
+@app.route(route="oauth/outlook/callback", methods=["GET"])
+async def oauth_outlook_callback(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/oauth/outlook/callback
+    Handles the OAuth callback from Microsoft.
+    """
+    try:
+        code = req.params.get("code")
+        error = req.params.get("error")
+        error_description = req.params.get("error_description")
+        
+        frontend_url = get_frontend_url()
+        
+        if error:
+            logger.error(f"Microsoft OAuth error: {error} - {error_description}")
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=outlook_auth_failed&message={error}"}
+            )
+        
+        if not code:
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=outlook_auth_failed&message=missing_code"}
+            )
+        
+        # Exchange code for tokens
+        tokens = exchange_microsoft_code(code)
+        if not tokens:
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=outlook_auth_failed&message=token_exchange_failed"}
+            )
+        
+        # Get user info from Microsoft
+        access_token = tokens.get("access_token")
+        ms_user = get_microsoft_user_info(access_token)
+        if not ms_user:
+            return func.HttpResponse(
+                status_code=302,
+                headers={"Location": f"{frontend_url}/account?error=outlook_auth_failed&message=user_info_failed"}
+            )
+        
+        outlook_email = ms_user.get("mail") or ms_user.get("userPrincipalName")
+        outlook_credentials = build_outlook_credentials(tokens)
+        
+        logger.info(f"Outlook OAuth successful for: {outlook_email}")
+        
+        import urllib.parse
+        import base64
+        
+        creds_json = json.dumps(outlook_credentials)
+        creds_b64 = base64.urlsafe_b64encode(creds_json.encode()).decode()
+        
+        redirect_params = urllib.parse.urlencode({
+            "outlook_connected": "true",
+            "outlook_email": outlook_email,
+            "outlook_creds": creds_b64
+        })
+        
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/account?{redirect_params}"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in Outlook OAuth callback: {str(e)}")
+        frontend_url = get_frontend_url()
+        return func.HttpResponse(
+            status_code=302,
+            headers={"Location": f"{frontend_url}/account?error=outlook_auth_failed&message=server_error"}
+        )
+
+
+@app.route(route="oauth/outlook/disconnect", methods=["POST"])
+async def oauth_outlook_disconnect(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/oauth/outlook/disconnect
+    Disconnect Outlook.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        service = UserInfoService()
+        user_info = await service.disconnect_outlook(user_email)
+        
+        return success_response(user_info)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except Exception as e:
+        logger.error(f"Error disconnecting Outlook: {str(e)}")
+        return error_response("Failed to disconnect Outlook", 500)
+
+
 logger.info("BuildSmartr Backend Azure Functions initialized successfully.")

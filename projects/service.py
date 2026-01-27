@@ -3,6 +3,9 @@ Business logic for project operations.
 """
 
 import logging
+import asyncio
+import re
+import hashlib
 from typing import Optional, List, Dict, Any, AsyncGenerator
 from datetime import datetime
 from shared.supabase_client import get_supabase_client, get_storage_bucket
@@ -10,6 +13,30 @@ from shared.permissions import check_project_access, get_user_email, NotFoundErr
 from shared.ai_client import get_ai_client
 
 logger = logging.getLogger(__name__)
+
+
+def generate_ai_project_id(project_name: str, user_email: str) -> str:
+    """
+    Generate a unique AI project ID.
+    
+    This MUST match the algorithm in IIVY-AI-Backend/project_indexer.py
+    Format: {normalized_name}_{user_hash}
+    Example: "my_project_a1b2c3d4" for user@example.com project "My Project"
+    
+    Args:
+        project_name: Human-readable project name
+        user_email: User's email address for isolation
+        
+    Returns:
+        Unique project ID safe for use as Pinecone namespace
+    """
+    # Normalize project name (lowercase, replace non-alphanumeric with underscore)
+    normalized_name = re.sub(r'[^a-z0-9]+', '_', project_name.lower()).strip('_')
+    
+    # Create 8-character hash from user email for uniqueness
+    email_hash = hashlib.sha256(user_email.lower().strip().encode()).hexdigest()[:8]
+    
+    return f"{normalized_name}_{email_hash}"
 
 
 class ProjectService:
@@ -341,9 +368,10 @@ class ProjectService:
         This method:
         1. Gets the project and validates access
         2. Gets Gmail credentials from user_info
-        3. Updates project status to 'indexing'
-        4. Calls AI backend to start indexing
-        5. Saves the ai_project_id and updates status
+        3. Generates ai_project_id BEFORE calling AI backend (so frontend can poll)
+        4. Updates project status to 'indexing' with ai_project_id
+        5. Calls AI backend to start indexing
+        6. Updates status when complete
         
         Args:
             user_id: The authenticated user's ID
@@ -370,57 +398,66 @@ class ProjectService:
         user_email = await get_user_email(user_id)
         gmail_credentials = await self._get_gmail_credentials(user_id)
         
-        # Update status to 'indexing'
+        # Generate ai_project_id BEFORE calling AI backend
+        # This allows the frontend to immediately start polling for progress
+        ai_project_id = generate_ai_project_id(project["name"], user_email)
+        logger.info(f"Generated ai_project_id: {ai_project_id} for project: {project['name']}")
+        
+        # Update status to 'indexing' AND store ai_project_id immediately
+        # This is critical - frontend needs ai_project_id to poll AI backend for progress
         self.client.table("projects") \
             .update({
+                "ai_project_id": ai_project_id,
                 "indexing_status": "indexing",
                 "updated_at": datetime.utcnow().isoformat()
             }) \
             .eq("id", project_id) \
             .execute()
         
-        try:
-            # Call AI backend
-            ai_client = get_ai_client()
-            result = await ai_client.start_indexing(
-                project_name=project["name"],
-                user_email=user_email,
-                gmail_credentials=gmail_credentials
-            )
-            
-            # Save ai_project_id and update status
-            ai_project_id = result.get("project_id")
-            status = result.get("status", "completed")
-            
-            self.client.table("projects") \
-                .update({
-                    "ai_project_id": ai_project_id,
-                    "indexing_status": status,
-                    "updated_at": datetime.utcnow().isoformat()
-                }) \
-                .eq("id", project_id) \
-                .execute()
-            
-            return {
-                "project_id": project_id,
-                "ai_project_id": ai_project_id,
-                "status": status,
-                "stats": result.get("stats", {}),
-                "vectorization": result.get("vectorization", {})
-            }
-            
-        except Exception as e:
-            # Update status to 'failed'
-            self.client.table("projects") \
-                .update({
-                    "indexing_status": "failed",
-                    "updated_at": datetime.utcnow().isoformat()
-                }) \
-                .eq("id", project_id) \
-                .execute()
-            
-            logger.error(f"Indexing failed for project {project_id}: {str(e)}")
-            raise
+        # Fire AI backend call in background (don't wait for it)
+        # This allows frontend to start polling immediately
+        async def _run_indexing():
+            try:
+                ai_client = get_ai_client()
+                logger.info(f"Starting indexing for project: {project['name']}")
+                result = await ai_client.start_indexing(
+                    project_name=project["name"],
+                    user_email=user_email,
+                    gmail_credentials=gmail_credentials
+                )
+                
+                # Update status when complete
+                status = result.get("status", "completed")
+                self.client.table("projects") \
+                    .update({
+                        "indexing_status": status,
+                        "updated_at": datetime.utcnow().isoformat()
+                    }) \
+                    .eq("id", project_id) \
+                    .execute()
+                logger.info(f"Indexing completed for project {project_id}: {status}")
+                
+            except Exception as e:
+                # Update status to 'failed'
+                self.client.table("projects") \
+                    .update({
+                        "indexing_status": "failed",
+                        "updated_at": datetime.utcnow().isoformat()
+                    }) \
+                    .eq("id", project_id) \
+                    .execute()
+                logger.error(f"Indexing failed for project {project_id}: {str(e)}")
+        
+        # Start background task
+        asyncio.create_task(_run_indexing())
+        
+        # Return immediately so frontend can start polling
+        return {
+            "project_id": project_id,
+            "ai_project_id": ai_project_id,
+            "status": "indexing",
+            "message": "Indexing started in background"
+        }
     
     async def get_indexing_status(self, user_id: str, project_id: str) -> Dict:
         """

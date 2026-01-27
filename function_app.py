@@ -194,6 +194,235 @@ async def delete_project(req: func.HttpRequest) -> func.HttpResponse:
         return error_response("Failed to delete project", 500)
 
 # =============================================================================
+# Project AI Integration Endpoints
+# =============================================================================
+
+@app.route(route="projects/{project_id}/index", methods=["POST"])
+async def start_project_indexing(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/projects/{project_id}/index
+    Start indexing a project with the AI backend.
+    
+    Requires Gmail to be connected.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        project_id = req.route_params.get("project_id")
+        
+        if not project_id:
+            return error_response("Project ID is required", 400)
+        
+        service = ProjectService()
+        result = await service.start_indexing(user_id, project_id)
+        
+        return success_response(result)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Project", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        logger.error(f"Error starting indexing: {str(e)}")
+        return error_response(f"Failed to start indexing: {str(e)}", 500)
+
+
+@app.route(route="projects/{project_id}/index/status", methods=["GET"])
+async def get_project_indexing_status(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/projects/{project_id}/index/status
+    Get the indexing status for a project.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        project_id = req.route_params.get("project_id")
+        
+        if not project_id:
+            return error_response("Project ID is required", 400)
+        
+        service = ProjectService()
+        result = await service.get_indexing_status(user_id, project_id)
+        
+        return success_response(result)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Project", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except Exception as e:
+        logger.error(f"Error getting indexing status: {str(e)}")
+        return error_response("Failed to get indexing status", 500)
+
+
+@app.route(route="projects/{project_id}/index/cancel", methods=["POST"])
+async def cancel_project_indexing(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/projects/{project_id}/index/cancel
+    Cancel an in-progress indexing operation.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        project_id = req.route_params.get("project_id")
+        
+        if not project_id:
+            return error_response("Project ID is required", 400)
+        
+        service = ProjectService()
+        result = await service.cancel_indexing(user_id, project_id)
+        
+        return success_response(result)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Project", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        logger.error(f"Error cancelling indexing: {str(e)}")
+        return error_response("Failed to cancel indexing", 500)
+
+
+@app.route(route="projects/{project_id}/search", methods=["POST"])
+async def search_project(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/projects/{project_id}/search
+    Search a project using RAG.
+    
+    Request body:
+    {
+        "question": "What is the quoted price?",
+        "top_k": 50  // optional
+    }
+    
+    Returns: Non-streaming answer with sources.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        project_id = req.route_params.get("project_id")
+        
+        if not project_id:
+            return error_response("Project ID is required", 400)
+        
+        try:
+            body = req.get_json()
+        except ValueError:
+            return error_response("Invalid JSON body", 400)
+        
+        question = body.get("question")
+        if not question:
+            return validation_error_response(
+                [{"field": "question", "message": "Question is required"}]
+            )
+        
+        top_k = body.get("top_k")
+        
+        service = ProjectService()
+        result = await service.search(user_id, project_id, question, top_k)
+        
+        return success_response(result)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Project", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except ValueError as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        logger.error(f"Error searching project: {str(e)}")
+        return error_response(f"Search failed: {str(e)}", 500)
+
+
+@app.route(route="projects/{project_id}/search/stream", methods=["POST"])
+async def search_project_stream(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/projects/{project_id}/search/stream
+    Search a project with streaming SSE response.
+    
+    Request body:
+    {
+        "question": "What is the quoted price?",
+        "top_k": 50  // optional
+    }
+    
+    Returns: Server-Sent Events stream with answer chunks.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        project_id = req.route_params.get("project_id")
+        
+        if not project_id:
+            return func.HttpResponse(
+                'event: error\ndata: {"message": "Project ID is required"}\n\n',
+                status_code=400,
+                mimetype="text/event-stream"
+            )
+        
+        try:
+            body = req.get_json()
+        except ValueError:
+            return func.HttpResponse(
+                'event: error\ndata: {"message": "Invalid JSON body"}\n\n',
+                status_code=400,
+                mimetype="text/event-stream"
+            )
+        
+        question = body.get("question")
+        if not question:
+            return func.HttpResponse(
+                'event: error\ndata: {"message": "Question is required"}\n\n',
+                status_code=400,
+                mimetype="text/event-stream"
+            )
+        
+        top_k = body.get("top_k")
+        
+        # Collect SSE events (Azure Functions v1 doesn't support true streaming)
+        service = ProjectService()
+        sse_events = ""
+        async for chunk in service.search_stream(user_id, project_id, question, top_k):
+            sse_events += chunk
+        
+        return func.HttpResponse(
+            sse_events,
+            status_code=200,
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            }
+        )
+        
+    except UnauthorizedError as e:
+        return func.HttpResponse(
+            f'event: error\ndata: {{"message": "{str(e)}"}}\n\n',
+            status_code=401,
+            mimetype="text/event-stream"
+        )
+    except Exception as e:
+        logger.error(f"Error in streaming search: {str(e)}")
+        return func.HttpResponse(
+            f'event: error\ndata: {{"message": "Search failed: {str(e)}"}}\n\n',
+            status_code=500,
+            mimetype="text/event-stream"
+        )
+
+
+# =============================================================================
 # Project Files Endpoints
 # =============================================================================
 

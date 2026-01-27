@@ -477,25 +477,30 @@ class ProjectService:
         ai_project_id = project.get("ai_project_id")
         db_status = project.get("indexing_status", "not_started")
         
-        # If not indexing or no ai_project_id, return DB status
-        if db_status != "indexing" or not ai_project_id:
+        # If no ai_project_id yet, return DB status only
+        if not ai_project_id:
             return {
                 "project_id": project_id,
-                "ai_project_id": ai_project_id,
+                "ai_project_id": None,
                 "status": db_status,
-                "percent": 100 if db_status == "completed" else 0,
+                "percent": 0,
                 "phase": db_status.title(),
                 "step": "",
-                "details": {}
+                "details": {"thread_count": 0, "message_count": 0, "pdf_count": 0}
             }
         
-        # Get status from AI backend
+        # Always try to get status from AI backend if we have ai_project_id
+        # This gets us real-time progress during indexing AND final stats after completion
         try:
             ai_client = get_ai_client()
             ai_status = await ai_client.get_indexing_status(ai_project_id)
             
+            ai_backend_status = ai_status.get("status", "not_found")
+            ai_percent = ai_status.get("percent", 0)
+            ai_details = ai_status.get("details", {"thread_count": 0, "message_count": 0, "pdf_count": 0})
+            
             # If AI backend says completed, update our DB
-            if ai_status.get("percent") == 100 or ai_status.get("status") == "completed":
+            if ai_percent == 100 or ai_backend_status == "completed":
                 self.client.table("projects") \
                     .update({
                         "indexing_status": "completed",
@@ -504,14 +509,26 @@ class ProjectService:
                     .eq("id", project_id) \
                     .execute()
             
+            # If AI backend lost the status (not_found), use DB status
+            if ai_backend_status == "not_found":
+                return {
+                    "project_id": project_id,
+                    "ai_project_id": ai_project_id,
+                    "status": db_status,
+                    "percent": 100 if db_status == "completed" else 0,
+                    "phase": db_status.title(),
+                    "step": "Your project is ready!" if db_status == "completed" else "",
+                    "details": ai_details
+                }
+            
             return {
                 "project_id": project_id,
                 "ai_project_id": ai_project_id,
-                "status": ai_status.get("status", db_status),
-                "percent": ai_status.get("percent", 0),
+                "status": ai_backend_status,
+                "percent": ai_percent,
                 "phase": ai_status.get("phase", ""),
                 "step": ai_status.get("step", ""),
-                "details": ai_status.get("details", {})
+                "details": ai_details
             }
             
         except Exception as e:
@@ -520,10 +537,10 @@ class ProjectService:
                 "project_id": project_id,
                 "ai_project_id": ai_project_id,
                 "status": db_status,
-                "percent": 0,
-                "phase": "Unknown",
-                "step": "Could not get status from AI backend",
-                "details": {}
+                "percent": 100 if db_status == "completed" else 0,
+                "phase": db_status.title() if db_status != "indexing" else "Unknown",
+                "step": "Your project is ready!" if db_status == "completed" else "Could not get status from AI backend",
+                "details": {"thread_count": 0, "message_count": 0, "pdf_count": 0}
             }
     
     async def cancel_indexing(self, user_id: str, project_id: str) -> Dict:

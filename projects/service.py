@@ -320,7 +320,10 @@ class ProjectService:
                 logger.info(f"Deleted AI project: {ai_project_id}")
             except Exception as e:
                 # Log but don't fail - still delete from Supabase
-                logger.warning(f"Failed to delete from AI backend: {str(e)}")
+                # This is OK - the project might never have been indexed or already deleted
+                logger.warning(f"AI backend cleanup note (continuing with deletion): {str(e)}")
+        else:
+            logger.info(f"Project {project_id} has no ai_project_id - skipping AI backend cleanup")
         
         # Step 2: Delete from Supabase (CASCADE will handle related records)
         self.client.table("projects") \

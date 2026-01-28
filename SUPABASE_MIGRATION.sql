@@ -19,6 +19,11 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS ai_project_id TEXT;
 -- Values: 'not_started', 'indexing', 'completed', 'failed', 'cancelled'
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS indexing_status TEXT DEFAULT 'not_started';
 
+-- Add indexing_error column
+-- Stores the error message when indexing fails
+-- NULL when status is not 'failed'
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS indexing_error TEXT;
+
 -- Create index for faster lookups by ai_project_id
 CREATE INDEX IF NOT EXISTS idx_projects_ai_project_id ON projects(ai_project_id);
 

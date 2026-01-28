@@ -429,11 +429,12 @@ class ProjectService:
                     gmail_credentials=gmail_credentials
                 )
                 
-                # Update status when complete
+                # Update status when complete and clear any previous error
                 status = result.get("status", "completed")
                 self.client.table("projects") \
                     .update({
                         "indexing_status": status,
+                        "indexing_error": None,  # Clear error on success
                         "updated_at": datetime.utcnow().isoformat()
                     }) \
                     .eq("id", project_id) \
@@ -441,15 +442,17 @@ class ProjectService:
                 logger.info(f"Indexing completed for project {project_id}: {status}")
                 
             except Exception as e:
-                # Update status to 'failed'
+                # Update status to 'failed' and store the error message
+                error_message = str(e)
                 self.client.table("projects") \
                     .update({
                         "indexing_status": "failed",
+                        "indexing_error": error_message,
                         "updated_at": datetime.utcnow().isoformat()
                     }) \
                     .eq("id", project_id) \
                     .execute()
-                logger.error(f"Indexing failed for project {project_id}: {str(e)}")
+                logger.error(f"Indexing failed for project {project_id}: {error_message}")
         
         # Start background task
         asyncio.create_task(_run_indexing())

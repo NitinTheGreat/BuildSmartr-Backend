@@ -91,7 +91,8 @@ def register_message_routes(app: func.FunctionApp):
                 chat_id,
                 body["role"],
                 body["content"],
-                body.get("search_modes")
+                body.get("search_modes"),
+                body.get("sources")  # Sources for AI responses
             )
             
             return created_response(message)

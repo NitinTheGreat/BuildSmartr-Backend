@@ -85,7 +85,8 @@ class MessageService:
         chat_id: str,
         role: str,
         content: str,
-        search_modes: Optional[List[str]] = None
+        search_modes: Optional[List[str]] = None,
+        sources: Optional[List[Dict]] = None
     ) -> Dict:
         """
         Add a message to a chat.
@@ -96,6 +97,7 @@ class MessageService:
             role: Message role (user or assistant)
             content: Message content
             search_modes: Optional list of search modes used
+            sources: Optional list of source objects (for AI responses)
             
         Returns:
             Created message record
@@ -128,6 +130,10 @@ class MessageService:
             "content": content,
             "search_modes": search_modes or [],
         }
+        
+        # Add sources if provided (for AI assistant messages)
+        if sources and role == "assistant":
+            message_data["sources"] = sources
         
         result = self.client.table("messages") \
             .insert(message_data) \

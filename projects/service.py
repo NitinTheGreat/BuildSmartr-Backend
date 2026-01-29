@@ -49,12 +49,13 @@ class ProjectService:
     async def list_projects(self, user_id: str) -> List[Dict]:
         """
         List all projects the user has access to (owned + shared).
+        Includes files, chats, and messages for each project.
         
         Args:
             user_id: The authenticated user's ID
             
         Returns:
-            List of projects with access information
+            List of projects with access information and related data
         """
         # 1. Get projects owned by user
         owned_result = self.client.table("projects") \
@@ -94,8 +95,49 @@ class ProjectService:
                     project["permission"] = permission_map.get(project["id"], "view")
                     shared_projects.append(project)
         
-        # 3. Combine and return
+        # 3. Combine all projects
         all_projects = owned_projects + shared_projects
+        
+        # 4. Load related data for each project (files, chats with messages)
+        for project in all_projects:
+            project_id = project["id"]
+            
+            # Get files
+            files_result = self.client.table("project_files") \
+                .select("*") \
+                .eq("project_id", project_id) \
+                .order("created_at", desc=True) \
+                .execute()
+            
+            # Generate signed URLs for each file
+            files_with_urls = []
+            for file_record in files_result.data:
+                file_record["url"] = self._get_signed_url_for_file(file_record)
+                files_with_urls.append(file_record)
+            project["files"] = files_with_urls
+            
+            # Get chats with messages
+            chats_result = self.client.table("chats") \
+                .select("*") \
+                .eq("project_id", project_id) \
+                .order("updated_at", desc=True) \
+                .execute()
+            
+            # Add messages and message counts to each chat
+            chats_with_messages = []
+            for chat in chats_result.data:
+                # Fetch messages for each chat
+                messages_result = self.client.table("messages") \
+                    .select("*") \
+                    .eq("chat_id", chat["id"]) \
+                    .order("timestamp", desc=False) \
+                    .execute()
+                chat["messages"] = messages_result.data
+                chat["message_count"] = len(messages_result.data)
+                chats_with_messages.append(chat)
+            
+            project["chats"] = chats_with_messages
+        
         return all_projects
     
     async def get_project(self, user_id: str, project_id: str, include_related: bool = True) -> Dict:
@@ -135,18 +177,27 @@ class ProjectService:
                 files_with_urls.append(file_record)
             project["files"] = files_with_urls
             
-            # Get chats (with message counts)
+            # Get chats with messages
             chats_result = self.client.table("chats") \
                 .select("*") \
                 .eq("project_id", project_id) \
                 .order("updated_at", desc=True) \
                 .execute()
             
-            # Add message counts to chats
-            from chats.service import ChatService
-            chat_service = ChatService()
-            chats_with_counts = chat_service._add_message_counts(chats_result.data)
-            project["chats"] = chats_with_counts
+            # Add messages and message counts to each chat
+            chats_with_messages = []
+            for chat in chats_result.data:
+                # Fetch messages for each chat
+                messages_result = self.client.table("messages") \
+                    .select("*") \
+                    .eq("chat_id", chat["id"]) \
+                    .order("timestamp", desc=False) \
+                    .execute()
+                chat["messages"] = messages_result.data
+                chat["message_count"] = len(messages_result.data)
+                chats_with_messages.append(chat)
+            
+            project["chats"] = chats_with_messages
             
             # Get shares (owner only)
             if access["is_owner"]:

@@ -31,6 +31,14 @@ CREATE INDEX IF NOT EXISTS idx_projects_ai_project_id ON projects(ai_project_id)
 CREATE INDEX IF NOT EXISTS idx_projects_indexing_status ON projects(indexing_status);
 
 -- ============================================================================
+-- MESSAGES TABLE: Add sources column for AI search results
+-- ============================================================================
+-- This stores the sources/citations used to generate AI responses
+-- Format: JSON array of source objects from vector search
+
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS sources JSONB;
+
+-- ============================================================================
 -- VERIFICATION QUERY
 -- Run this after migration to verify the columns were added:
 -- ============================================================================
@@ -38,6 +46,11 @@ CREATE INDEX IF NOT EXISTS idx_projects_indexing_status ON projects(indexing_sta
 -- FROM information_schema.columns 
 -- WHERE table_name = 'projects' 
 -- AND column_name IN ('ai_project_id', 'indexing_status');
+--
+-- SELECT column_name, data_type 
+-- FROM information_schema.columns 
+-- WHERE table_name = 'messages' 
+-- AND column_name = 'sources';
 
 -- ============================================================================
 -- EXAMPLE DATA (for testing)
@@ -48,3 +61,8 @@ CREATE INDEX IF NOT EXISTS idx_projects_indexing_status ON projects(indexing_sta
 -- name: "Microsoft Azure"
 -- ai_project_id: "microsoft_azure_a1b2c3d4"   (Pinecone namespace)
 -- indexing_status: "completed"
+--
+-- AI message with sources:
+-- role: "assistant"
+-- content: "Based on the documents..."
+-- sources: [{"chunk_id": "abc", "text": "...", "score": 0.95, ...}, ...]

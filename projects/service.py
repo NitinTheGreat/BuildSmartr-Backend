@@ -49,13 +49,15 @@ class ProjectService:
     async def list_projects(self, user_id: str) -> List[Dict]:
         """
         List all projects the user has access to (owned + shared).
-        Includes files, chats, and messages for each project.
+        
+        LIGHTWEIGHT: Returns projects with chat metadata only (no messages).
+        Messages are fetched separately via GET /api/chats/{id}/messages.
         
         Args:
             user_id: The authenticated user's ID
             
         Returns:
-            List of projects with access information and related data
+            List of projects with access information and chat metadata
         """
         # 1. Get projects owned by user
         owned_result = self.client.table("projects") \
@@ -98,7 +100,7 @@ class ProjectService:
         # 3. Combine all projects
         all_projects = owned_projects + shared_projects
         
-        # 4. Load related data for each project (files, chats with messages)
+        # 4. Load related data for each project (files, chats - NO messages)
         for project in all_projects:
             project_id = project["id"]
             
@@ -116,33 +118,43 @@ class ProjectService:
                 files_with_urls.append(file_record)
             project["files"] = files_with_urls
             
-            # Get chats with messages
+            # Get chats (LIGHTWEIGHT - no messages embedded)
             chats_result = self.client.table("chats") \
-                .select("*") \
+                .select("id, user_id, project_id, title, chat_type, created_at, updated_at") \
                 .eq("project_id", project_id) \
                 .order("updated_at", desc=True) \
                 .execute()
             
-            # Add messages and message counts to each chat
-            chats_with_messages = []
-            for chat in chats_result.data:
-                # Fetch messages for each chat
-                messages_result = self.client.table("messages") \
-                    .select("*") \
-                    .eq("chat_id", chat["id"]) \
-                    .order("timestamp", desc=False) \
-                    .execute()
-                chat["messages"] = messages_result.data
-                chat["message_count"] = len(messages_result.data)
-                chats_with_messages.append(chat)
+            # Get message counts efficiently in a single query
+            chat_ids = [chat["id"] for chat in chats_result.data]
+            message_counts = {}
             
-            project["chats"] = chats_with_messages
+            if chat_ids:
+                # Get counts for all chats at once (avoids N+1)
+                for chat_id in chat_ids:
+                    count_result = self.client.table("messages") \
+                        .select("id", count="exact") \
+                        .eq("chat_id", chat_id) \
+                        .execute()
+                    message_counts[chat_id] = count_result.count or 0
+            
+            # Build chat metadata (NO messages array)
+            chats_metadata = []
+            for chat in chats_result.data:
+                chat["message_count"] = message_counts.get(chat["id"], 0)
+                # Explicitly NOT including messages - they're fetched separately
+                chats_metadata.append(chat)
+            
+            project["chats"] = chats_metadata
         
         return all_projects
     
     async def get_project(self, user_id: str, project_id: str, include_related: bool = True) -> Dict:
         """
         Get a single project with optional related data.
+        
+        LIGHTWEIGHT: Returns project with chat metadata only (no messages).
+        Messages are fetched separately via GET /api/chats/{id}/messages.
         
         Args:
             user_id: The authenticated user's ID
@@ -177,27 +189,32 @@ class ProjectService:
                 files_with_urls.append(file_record)
             project["files"] = files_with_urls
             
-            # Get chats with messages
+            # Get chats (LIGHTWEIGHT - no messages embedded)
             chats_result = self.client.table("chats") \
-                .select("*") \
+                .select("id, user_id, project_id, title, chat_type, created_at, updated_at") \
                 .eq("project_id", project_id) \
                 .order("updated_at", desc=True) \
                 .execute()
             
-            # Add messages and message counts to each chat
-            chats_with_messages = []
-            for chat in chats_result.data:
-                # Fetch messages for each chat
-                messages_result = self.client.table("messages") \
-                    .select("*") \
-                    .eq("chat_id", chat["id"]) \
-                    .order("timestamp", desc=False) \
-                    .execute()
-                chat["messages"] = messages_result.data
-                chat["message_count"] = len(messages_result.data)
-                chats_with_messages.append(chat)
+            # Get message counts efficiently
+            chat_ids = [chat["id"] for chat in chats_result.data]
+            message_counts = {}
             
-            project["chats"] = chats_with_messages
+            if chat_ids:
+                for chat_id in chat_ids:
+                    count_result = self.client.table("messages") \
+                        .select("id", count="exact") \
+                        .eq("chat_id", chat_id) \
+                        .execute()
+                    message_counts[chat_id] = count_result.count or 0
+            
+            # Build chat metadata (NO messages array)
+            chats_metadata = []
+            for chat in chats_result.data:
+                chat["message_count"] = message_counts.get(chat["id"], 0)
+                chats_metadata.append(chat)
+            
+            project["chats"] = chats_metadata
             
             # Get shares (owner only)
             if access["is_owner"]:

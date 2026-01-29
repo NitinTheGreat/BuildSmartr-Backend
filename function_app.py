@@ -925,6 +925,84 @@ async def delete_chat(req: func.HttpRequest) -> func.HttpResponse:
         logger.error(f"Error deleting chat: {str(e)}")
         return error_response("Failed to delete chat", 500)
 
+
+# =============================================================================
+# Chat Conversation Memory Endpoints
+# =============================================================================
+
+@app.route(route="chats/{chat_id}/context", methods=["GET"])
+async def get_chat_context(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/chats/{chat_id}/context
+    Get conversation context for AI search (summary + recent messages).
+    Used to enable follow-up questions in the chat.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        chat_id = req.route_params.get("chat_id")
+        
+        if not chat_id:
+            return error_response("Chat ID is required", 400)
+        
+        service = ChatService()
+        context = await service.get_chat_context(user_id, chat_id)
+        
+        return success_response(context)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Chat", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except Exception as e:
+        logger.error(f"Error getting chat context: {str(e)}")
+        return error_response("Failed to get chat context", 500)
+
+
+@app.route(route="chats/{chat_id}/summary", methods=["POST"])
+async def update_chat_summary(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/chats/{chat_id}/summary
+    Generate or update the conversation summary.
+    Called after messages to compress conversation context.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        chat_id = req.route_params.get("chat_id")
+        
+        if not chat_id:
+            return error_response("Chat ID is required", 400)
+        
+        # Parse optional body
+        force = False
+        try:
+            body = req.get_json()
+            force = body.get("force", False)
+        except ValueError:
+            pass  # Body is optional
+        
+        service = ChatService()
+        result = await service.update_chat_summary(user_id, chat_id, force)
+        
+        if result is None:
+            return no_content_response()
+        
+        return success_response(result)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Chat", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except Exception as e:
+        logger.error(f"Error updating chat summary: {str(e)}")
+        return error_response("Failed to update summary", 500)
+
+
 # =============================================================================
 # Messages Endpoints
 # =============================================================================

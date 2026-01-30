@@ -339,6 +339,18 @@ class ProjectService:
         if "tags" in data:
             update_data["tags"] = data["tags"]
         
+        # Structured address fields for quotes feature
+        if "address_street" in data:
+            update_data["address_street"] = data["address_street"]
+        if "address_city" in data:
+            update_data["address_city"] = data["address_city"]
+        if "address_region" in data:
+            update_data["address_region"] = data["address_region"]
+        if "address_country" in data:
+            update_data["address_country"] = data["address_country"]
+        if "address_postal" in data:
+            update_data["address_postal"] = data["address_postal"]
+        
         result = self.client.table("projects") \
             .update(update_data) \
             .eq("id", project_id) \

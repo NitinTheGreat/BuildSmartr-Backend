@@ -105,6 +105,7 @@ class VendorServiceService:
             "pricing_rules": data.get("pricing_rules"),
             "lead_time": data.get("lead_time"),
             "notes": data.get("notes"),
+            "company_description": data.get("company_description"),
             "is_active": data.get("is_active", True),
         }
         
@@ -182,7 +183,7 @@ class VendorServiceService:
         # Only update provided fields
         allowed_fields = [
             "company_name", "countries_served", "regions_served", 
-            "pricing_rules", "lead_time", "notes", "is_active"
+            "pricing_rules", "lead_time", "notes", "company_description", "is_active"
         ]
         
         for field in allowed_fields:
@@ -271,12 +272,12 @@ class VendorServiceService:
             region: Optional region/state code (e.g., "BC", "WA")
             
         Returns:
-            List of matching vendor services with pricing info
+            List of matching vendor services with pricing info and contact details
         """
         # Query vendors for this segment that serve this country
         # Using raw SQL-like query since Supabase Python doesn't support array contains well
         result = self.client.table("vendor_services") \
-            .select("*, user_info(email, company_name)") \
+            .select("*, user_info(email, company_name, full_name)") \
             .eq("segment", segment) \
             .eq("is_active", True) \
             .execute()
@@ -297,8 +298,12 @@ class VendorServiceService:
             user_info = service.get("user_info", {}) or {}
             
             vendors.append({
+                "vendor_service_id": service.get("id"),
                 "user_email": service.get("user_email"),
                 "company_name": service.get("company_name") or user_info.get("company_name"),
+                "company_description": service.get("company_description"),
+                "contact_email": service.get("user_email"),
+                "contact_name": user_info.get("full_name"),
                 "segment": service.get("segment"),
                 "pricing_rules": service.get("pricing_rules"),
                 "lead_time": service.get("lead_time"),

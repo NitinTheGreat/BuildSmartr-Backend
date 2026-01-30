@@ -1501,6 +1501,72 @@ async def get_quote(req: func.HttpRequest) -> func.HttpResponse:
 
 
 # =============================================================================
+# Vendor Leads/Impressions Endpoints (Billing)
+# =============================================================================
+
+@app.route(route="vendors/me/leads", methods=["GET"])
+async def get_vendor_leads(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/vendors/me/leads
+    Get all leads (impressions) for the current vendor.
+    
+    Shows all quotes where this vendor was displayed to a customer.
+    Vendors can only see their own leads (enforced by RLS and API).
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        service = QuoteService()
+        leads = await service.get_vendor_impressions(user_email)
+        
+        return success_response(leads)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except Exception as e:
+        logger.error(f"Error getting vendor leads: {str(e)}")
+        return error_response("Failed to get vendor leads", 500)
+
+
+@app.route(route="vendors/me/billing", methods=["GET"])
+async def get_vendor_billing(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/vendors/me/billing
+    Get billing summary for the current vendor.
+    
+    Returns:
+    {
+        "total_leads": 5,
+        "total_charged": 1250.00,
+        "total_paid": 500.00,
+        "balance_due": 750.00,
+        "leads_by_status": {"pending": 3, "invoiced": 0, "paid": 2}
+    }
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        service = QuoteService()
+        billing = await service.get_vendor_billing_summary(user_email)
+        
+        return success_response(billing)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except Exception as e:
+        logger.error(f"Error getting vendor billing: {str(e)}")
+        return error_response("Failed to get vendor billing", 500)
+
+
+# =============================================================================
 # User Info Endpoints
 # =============================================================================
 

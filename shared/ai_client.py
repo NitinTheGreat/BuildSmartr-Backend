@@ -271,6 +271,66 @@ class AIBackendClient:
                 
                 logger.info(f"AI project deleted: {ai_project_id}")
                 return result
+    
+    async def generate_quotes(
+        self,
+        segment: str,
+        segment_name: str,
+        project_sqft: int,
+        city: Optional[str],
+        region: str,
+        country: str,
+        options: Dict,
+        vendors: list
+    ) -> Dict:
+        """
+        Generate vendor quotes using LLM.
+        
+        Calls AI backend's /api/generate_quotes endpoint.
+        The LLM parses each vendor's pricing rules and calculates quotes.
+        
+        Args:
+            segment: Segment ID (e.g., "windows_exterior_doors")
+            segment_name: Human-readable segment name
+            project_sqft: Project size in square feet
+            city: City name (for location-based adjustments)
+            region: Region/state code (e.g., "BC", "WA")
+            country: Country code (e.g., "CA", "US")
+            options: Quote options (e.g., {"finish": "premium"})
+            vendors: List of vendor dicts with pricing_rules
+            
+        Returns:
+            dict with:
+                - vendor_quotes: Array of calculated quotes per vendor
+        """
+        url = f"{self.base_url}/api/generate_quotes"
+        
+        payload = {
+            "segment": segment,
+            "segment_name": segment_name,
+            "project_sqft": project_sqft,
+            "city": city,
+            "region": region,
+            "country": country,
+            "options": options,
+            "vendors": vendors
+        }
+        
+        logger.info(f"Generating quotes for {segment} ({len(vendors)} vendors)")
+        
+        async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=60)  # 1 minute timeout
+            
+            async with session.post(url, json=payload, timeout=timeout) as response:
+                result = await response.json()
+                
+                if response.status != 200:
+                    error_msg = result.get("error", "Unknown error")
+                    logger.error(f"Quote generation failed: {error_msg}")
+                    raise Exception(f"Quote generation failed: {error_msg}")
+                
+                logger.info(f"Generated {len(result.get('vendor_quotes', []))} quotes")
+                return result
 
 
 # Singleton instance

@@ -26,6 +26,9 @@ from project_shares.service import ProjectShareService
 from chats.service import ChatService
 from messages.service import MessageService
 from user_info.service import UserInfoService
+from segments.service import SegmentService
+from vendor_services.service import VendorServiceService
+from quotes.service import QuoteService
 from shared.auth import get_user_from_token, UnauthorizedError
 from shared.responses import (
     success_response, created_response, no_content_response,
@@ -1175,6 +1178,327 @@ async def delete_message(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as e:
         logger.error(f"Error deleting message: {str(e)}")
         return error_response("Failed to delete message", 500)
+
+# =============================================================================
+# Segments Endpoints (Quote Feature)
+# =============================================================================
+
+@app.route(route="segments", methods=["GET"])
+async def list_segments(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/segments
+    List all trade segments grouped by phase.
+    
+    Query params:
+        grouped: "true" (default) or "false" for flat list
+    """
+    try:
+        # Segments are public - no auth required
+        grouped = req.params.get("grouped", "true").lower() == "true"
+        
+        service = SegmentService()
+        segments = await service.list_segments(grouped=grouped)
+        
+        return success_response(segments)
+        
+    except Exception as e:
+        logger.error(f"Error listing segments: {str(e)}")
+        return error_response("Failed to list segments", 500)
+
+
+@app.route(route="segments/{segment_id}", methods=["GET"])
+async def get_segment(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/segments/{segment_id}
+    Get a single segment with benchmark info.
+    """
+    try:
+        segment_id = req.route_params.get("segment_id")
+        
+        if not segment_id:
+            return error_response("Segment ID is required", 400)
+        
+        service = SegmentService()
+        segment = await service.get_segment(segment_id)
+        
+        return success_response(segment)
+        
+    except ValueError as e:
+        return not_found_response("Segment", str(e))
+    except Exception as e:
+        logger.error(f"Error getting segment: {str(e)}")
+        return error_response("Failed to get segment", 500)
+
+
+# =============================================================================
+# Vendor Services Endpoints (Quote Feature)
+# =============================================================================
+
+@app.route(route="vendor-services", methods=["GET"])
+async def list_vendor_services(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/vendor-services
+    List all vendor services for the current user.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        service = VendorServiceService()
+        services = await service.list_services(user_email)
+        
+        return success_response(services)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except Exception as e:
+        logger.error(f"Error listing vendor services: {str(e)}")
+        return error_response("Failed to list vendor services", 500)
+
+
+@app.route(route="vendor-services", methods=["POST"])
+async def create_vendor_service(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/vendor-services
+    Create a new vendor service offering.
+    
+    Request body:
+    {
+        "company_name": "ABC Windows",
+        "segment": "windows_exterior_doors",
+        "countries_served": ["CA", "US"],
+        "regions_served": ["BC", "AB", "WA"],
+        "pricing_rules": "Base $14/sf. Richmond +$2/sf. Min $5,000.",
+        "lead_time": "3-4 weeks",
+        "notes": "Excludes tax and permits"
+    }
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        try:
+            body = req.get_json()
+        except ValueError:
+            return error_response("Invalid JSON body", 400)
+        
+        # Validate required fields
+        errors = []
+        if not body.get("company_name"):
+            errors.append({"field": "company_name", "message": "Company name is required"})
+        if not body.get("segment"):
+            errors.append({"field": "segment", "message": "Segment is required"})
+        
+        if errors:
+            return validation_error_response(errors)
+        
+        service = VendorServiceService()
+        vendor_service = await service.create_service(user_email, body)
+        
+        return created_response(vendor_service)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except ValueError as e:
+        return validation_error_response([{"field": "segment", "message": str(e)}])
+    except Exception as e:
+        logger.error(f"Error creating vendor service: {str(e)}")
+        return error_response("Failed to create vendor service", 500)
+
+
+@app.route(route="vendor-services/{service_id}", methods=["PUT"])
+async def update_vendor_service(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    PUT /api/vendor-services/{service_id}
+    Update a vendor service offering.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        service_id = req.route_params.get("service_id")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        if not service_id:
+            return error_response("Service ID is required", 400)
+        
+        try:
+            body = req.get_json()
+        except ValueError:
+            return error_response("Invalid JSON body", 400)
+        
+        service = VendorServiceService()
+        vendor_service = await service.update_service(user_email, service_id, body)
+        
+        return success_response(vendor_service)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except ValueError as e:
+        return not_found_response("Vendor Service", str(e))
+    except Exception as e:
+        logger.error(f"Error updating vendor service: {str(e)}")
+        return error_response("Failed to update vendor service", 500)
+
+
+@app.route(route="vendor-services/{service_id}", methods=["DELETE"])
+async def delete_vendor_service(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    DELETE /api/vendor-services/{service_id}
+    Delete a vendor service offering.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_email = user.get("email")
+        service_id = req.route_params.get("service_id")
+        
+        if not user_email:
+            return error_response("User email not found in token", 400)
+        
+        if not service_id:
+            return error_response("Service ID is required", 400)
+        
+        service = VendorServiceService()
+        await service.delete_service(user_email, service_id)
+        
+        return no_content_response()
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except ValueError as e:
+        return not_found_response("Vendor Service", str(e))
+    except Exception as e:
+        logger.error(f"Error deleting vendor service: {str(e)}")
+        return error_response("Failed to delete vendor service", 500)
+
+
+# =============================================================================
+# Quote Requests Endpoints (Quote Feature)
+# =============================================================================
+
+@app.route(route="projects/{project_id}/quotes", methods=["POST"])
+async def create_quote_request(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    POST /api/projects/{project_id}/quotes
+    Create a new quote request for a project.
+    
+    Request body:
+    {
+        "segment": "windows_exterior_doors",
+        "project_sqft": 8000,
+        "options": {"finish": "standard"},
+        "chat_id": "optional-chat-uuid"
+    }
+    
+    Returns vendor quotes and IIVY benchmark.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        project_id = req.route_params.get("project_id")
+        
+        if not project_id:
+            return error_response("Project ID is required", 400)
+        
+        try:
+            body = req.get_json()
+        except ValueError:
+            return error_response("Invalid JSON body", 400)
+        
+        # Validate required fields
+        errors = []
+        if not body.get("segment"):
+            errors.append({"field": "segment", "message": "Segment is required"})
+        if not body.get("project_sqft"):
+            errors.append({"field": "project_sqft", "message": "Project size (sqft) is required"})
+        
+        if errors:
+            return validation_error_response(errors)
+        
+        service = QuoteService()
+        quote = await service.create_quote_request(user_id, project_id, body)
+        
+        return created_response(quote)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Project", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except ValueError as e:
+        return validation_error_response([{"field": "input", "message": str(e)}])
+    except Exception as e:
+        logger.error(f"Error creating quote request: {str(e)}")
+        return error_response(f"Failed to create quote request: {str(e)}", 500)
+
+
+@app.route(route="projects/{project_id}/quotes", methods=["GET"])
+async def list_project_quotes(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/projects/{project_id}/quotes
+    List all quote requests for a project.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        project_id = req.route_params.get("project_id")
+        
+        if not project_id:
+            return error_response("Project ID is required", 400)
+        
+        service = QuoteService()
+        quotes = await service.list_project_quotes(user_id, project_id)
+        
+        return success_response(quotes)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Project", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except Exception as e:
+        logger.error(f"Error listing project quotes: {str(e)}")
+        return error_response("Failed to list quotes", 500)
+
+
+@app.route(route="quotes/{quote_id}", methods=["GET"])
+async def get_quote(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    GET /api/quotes/{quote_id}
+    Get a single quote request with full details.
+    """
+    try:
+        user = get_user_from_token(req)
+        user_id = user["id"]
+        quote_id = req.route_params.get("quote_id")
+        
+        if not quote_id:
+            return error_response("Quote ID is required", 400)
+        
+        service = QuoteService()
+        quote = await service.get_quote(user_id, quote_id)
+        
+        return success_response(quote)
+        
+    except UnauthorizedError as e:
+        return error_response(str(e), 401)
+    except NotFoundError as e:
+        return not_found_response("Quote", str(e))
+    except ForbiddenError as e:
+        return forbidden_response(str(e))
+    except Exception as e:
+        logger.error(f"Error getting quote: {str(e)}")
+        return error_response("Failed to get quote", 500)
+
 
 # =============================================================================
 # User Info Endpoints

@@ -370,13 +370,13 @@ class QuoteService:
         # Get customer info for vendor notifications
         customer_email = await get_user_email(customer_user_id)
         customer_info = self.client.table("user_info") \
-            .select("full_name, company_name") \
+            .select("company_name") \
             .eq("email", customer_email.lower()) \
             .execute()
         
         customer_name = None
         if customer_info.data:
-            customer_name = customer_info.data[0].get("full_name") or customer_info.data[0].get("company_name")
+            customer_name = customer_info.data[0].get("company_name")
         
         # Build project location string
         project_location = ", ".join(filter(None, [
